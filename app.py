@@ -182,6 +182,7 @@ def room_label(b):
 
 (
     tab_bookings,
+    tab_calendar,
     tab_revenue,
     tab_listing,
     tab_ota,
@@ -192,6 +193,7 @@ def room_label(b):
 ) = st.tabs(
     [
         "予約",
+        "カレンダー",
         "売上",
         "リスティング問題点",
         "OTA評価(手動入力)",
@@ -202,26 +204,115 @@ def room_label(b):
     ]
 )
 
+def booking_row(b):
+    return {
+        "物件・部屋": room_label(b),
+        "ゲスト": f"{b.get('firstName', '')} {b.get('lastName', '')}".strip(),
+        "チャネル": b.get("referer") or "不明",
+        "チェックイン": b.get("arrival"),
+        "チェックアウト": b.get("departure"),
+        "ステータス": b.get("status"),
+        "金額": booking_amount(b),
+    }
+
+
 with tab_bookings:
     st.subheader(f"予約一覧 ({date_from} 〜 {date_to})")
     if not bookings:
         st.info("この期間の予約はありません。")
     else:
-        rows = []
-        for b in bookings:
-            rows.append(
-                {
-                    "物件・部屋": room_label(b),
-                    "ゲスト": f"{b.get('firstName', '')} {b.get('lastName', '')}".strip(),
-                    "チャネル": b.get("referer") or "不明",
-                    "チェックイン": b.get("arrival"),
-                    "チェックアウト": b.get("departure"),
-                    "ステータス": b.get("status"),
-                    "金額": booking_amount(b),
-                }
-            )
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame([booking_row(b) for b in bookings])
         st.dataframe(df, use_container_width=True)
+
+        st.markdown("#### 物件別")
+        for p in properties:
+            pid = p.get("id")
+            p_bookings = [b for b in bookings if b.get("propertyId") == pid]
+            if not p_bookings:
+                continue
+            with st.expander(f"🏠 {p.get('name')}({len(p_bookings)}件)"):
+                st.dataframe(
+                    pd.DataFrame([booking_row(b) for b in p_bookings]),
+                    use_container_width=True,
+                )
+
+with tab_calendar:
+    st.subheader("カレンダー")
+    st.caption("部屋ごとに、予約で埋まっている日を一覧で確認できます。")
+
+    cal_col1, cal_col2 = st.columns([2, 1])
+    with cal_col1:
+        cal_start = st.date_input("表示開始日", dt.date.today(), key="cal_start")
+    with cal_col2:
+        cal_days = st.number_input(
+            "表示日数", min_value=7, max_value=60, value=14, step=7, key="cal_days"
+        )
+    cal_end = cal_start + dt.timedelta(days=int(cal_days))
+
+    @st.cache_data(ttl=300)
+    def load_calendar_bookings(prop_ids, from_date, to_date):
+        data = []
+        for pid in prop_ids:
+            data.extend(
+                client.get_bookings(propertyId=pid, arrivalFrom=from_date, arrivalTo=to_date)
+            )
+        return data
+
+    cal_prop_ids = tuple(p.get("id") for p in properties)
+    try:
+        cal_bookings = load_calendar_bookings(
+            cal_prop_ids,
+            (cal_start - dt.timedelta(days=60)).isoformat(),
+            cal_end.isoformat(),
+        )
+    except Beds24Error as e:
+        st.error(f"予約データの取得に失敗しました: {e}")
+        cal_bookings = []
+
+    date_list = [cal_start + dt.timedelta(days=i) for i in range(int(cal_days))]
+    weekday_jp = ["月", "火", "水", "木", "金", "土", "日"]
+    date_cols = [f"{d.month}/{d.day}({weekday_jp[d.weekday()]})" for d in date_list]
+
+    room_keys = [k for k in room_labels if k[0] in selected_property_ids]
+    room_keys.sort(key=lambda k: (name_map.get(k[0], ""), room_labels[k]))
+
+    row_data = {}
+    rows_order = []
+    for k in room_keys:
+        label = room_labels[k]
+        if label not in row_data:
+            row_data[label] = ["" for _ in date_list]
+            rows_order.append(label)
+
+    for b in cal_bookings:
+        if b.get("status") not in ("new", "confirmed"):
+            continue
+        key = (b.get("propertyId"), b.get("roomId"), b.get("unitId"))
+        label = room_labels.get(key)
+        if label is None or label not in row_data:
+            continue
+        try:
+            arrival = dt.date.fromisoformat(b["arrival"])
+            departure = dt.date.fromisoformat(b["departure"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        guest = b.get("lastName") or b.get("firstName") or "ゲスト"
+        for i, d in enumerate(date_list):
+            if arrival <= d < departure:
+                row_data[label][i] = guest
+
+    if not rows_order:
+        st.info("表示できる部屋がありません。")
+    else:
+        cal_df = pd.DataFrame(
+            [row_data[label] for label in rows_order], index=rows_order, columns=date_cols
+        )
+
+        def highlight_booked(val):
+            return "background-color: #ffd6d6" if val else ""
+
+        st.dataframe(cal_df.style.map(highlight_booked), use_container_width=True)
+        st.caption("色付きのマスは予約で埋まっている日です(ステータスが new/confirmed の予約のみ反映)。")
 
 with tab_revenue:
     st.subheader("売上サマリー")
@@ -259,6 +350,20 @@ with tab_revenue:
             with col3:
                 by_channel = df.groupby("チャネル")["金額"].sum()
                 st.bar_chart(by_channel)
+
+            st.markdown("#### 物件別")
+            for p in properties:
+                pname = p.get("name")
+                p_df = df[df["物件"] == pname]
+                if p_df.empty:
+                    continue
+                st.markdown(f"##### 🏠 {pname}")
+                pcol1, pcol2 = st.columns(2)
+                with pcol1:
+                    st.metric("売上", f"{p_df['金額'].sum():,.0f}")
+                    st.bar_chart(p_df.groupby("チェックイン月")["金額"].sum())
+                with pcol2:
+                    st.bar_chart(p_df.groupby("チャネル")["金額"].sum())
 
     with st.expander("生データを見る(デバッグ用)"):
         st.json(bookings[:3] if bookings else [])
@@ -426,6 +531,8 @@ with tab_minpaku:
     )
 
     for label, (prop_id, room_id) in minpaku.REGULATED_ROOMS.items():
+        if prop_id not in selected_property_ids:
+            continue
         try:
             reserved = minpaku.RESERVED_PREMIUM_WINDOWS.get(label, [])
             status = minpaku.compute_room_status(client, room_id, reserved_windows=reserved)
@@ -784,6 +891,7 @@ with tab_tax:
             tax_bookings = []
 
         rows = []
+        by_property = {}
         total_tax = 0
         total_nights = 0
         for b in tax_bookings:
@@ -792,9 +900,14 @@ with tab_tax:
                 continue
             total_tax += result["total_tax"]
             total_nights += result["nights"]
+            pname = name_map.get(b.get("propertyId"), b.get("propertyId"))
+            stat = by_property.setdefault(pname, {"tax": 0, "nights": 0, "bookings": 0})
+            stat["tax"] += result["total_tax"]
+            stat["nights"] += result["nights"]
+            stat["bookings"] += 1
             rows.append(
                 {
-                    "物件": name_map.get(b.get("propertyId"), b.get("propertyId")),
+                    "物件": pname,
                     "チェックイン": b.get("arrival"),
                     "チェックアウト": b.get("departure"),
                     "ゲスト": f"{b.get('firstName', '')} {b.get('lastName', '')}".strip(),
@@ -814,6 +927,19 @@ with tab_tax:
         if not rows:
             st.info("この月は対象予約がありません。")
         else:
+            st.markdown("#### 物件別")
+            summary_rows = [
+                {
+                    "物件": pname,
+                    "予約件数": s["bookings"],
+                    "泊数": s["nights"],
+                    "宿泊税額": f"¥{s['tax']:,.0f}",
+                }
+                for pname, s in by_property.items()
+            ]
+            st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+
+            st.markdown("#### 予約一覧")
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
             csv_data = pd.DataFrame(rows).to_csv(index=False).encode("utf-8-sig")
             st.download_button(
