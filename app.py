@@ -119,6 +119,12 @@ def property_name_map(properties):
     return {p.get("id"): p.get("name", "不明") for p in properties}
 
 
+# 予約停止中などの理由でカレンダーに表示したくない部屋 (propertyId, roomId)
+CALENDAR_EXCLUDED_ROOMS = {
+    (328093, 680832),  # The Nest Koenji 201(予約停止中)
+}
+
+
 def unit_label_map(properties):
     """(propertyId, roomId, unitId) -> 表示名 ('物件名 部屋名')"""
     labels = {}
@@ -300,7 +306,11 @@ with tab_calendar:
     weekday_jp = ["月", "火", "水", "木", "金", "土", "日"]
     date_cols = [f"{d.month}/{d.day}({weekday_jp[d.weekday()]})" for d in date_list]
 
-    room_keys = [k for k in room_labels if k[0] in selected_property_ids]
+    room_keys = [
+        k
+        for k in room_labels
+        if k[0] in selected_property_ids and (k[0], k[1]) not in CALENDAR_EXCLUDED_ROOMS
+    ]
     room_keys.sort(key=lambda k: (name_map.get(k[0], ""), room_labels[k]))
 
     CHANNEL_COLORS = {
