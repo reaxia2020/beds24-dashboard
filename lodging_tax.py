@@ -12,8 +12,15 @@ https://www.tax.metro.tokyo.lg.jp/kazei/leisure/shuk/shuk_minaoshi
 """
 
 import datetime as dt
+import re
 
 REGIME_CHANGE_DATE = dt.date(2027, 4, 1)
+
+# Booking.comの rateDescription は "2026-10-28 (...) JPY 8500 genius" のように
+# 日付ごとの素泊まり単価(清掃費等を含まない)を含むため、これを優先的に使う。
+_DATE_RATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})\D*?JPY\s*([\d,]+(?:\.\d+)?)")
+# Airbnbの rateDescription は合計の "Base Price" (清掃費を含まない素泊まり合計)を含む。
+_BASE_PRICE_RE = re.compile(r"Base Price\s+([\d,]+(?:\.\d+)?)\s*JPY")
 
 OLD_EXEMPT_THRESHOLD = 10_000
 OLD_TIER1_THRESHOLD = 15_000
@@ -84,11 +91,49 @@ def booking_amount(booking):
     return 0.0
 
 
+def parse_nightly_rates(rate_description, arrival, departure):
+    """Booking.comのrateDescriptionから日付別の素泊まり単価を抽出する。
+
+    戻り値: {date: 単価(円)}。抽出できなければ空dict。
+    """
+    if not rate_description:
+        return {}
+    rates = {}
+    for m in _DATE_RATE_RE.finditer(rate_description):
+        try:
+            d = dt.date.fromisoformat(m.group(1))
+        except ValueError:
+            continue
+        if arrival <= d < departure:
+            try:
+                rates[d] = float(m.group(2).replace(",", ""))
+            except ValueError:
+                continue
+    return rates
+
+
+def parse_room_only_price(rate_description):
+    """Airbnbのレート詳細から、清掃費を含まない素泊まり合計(Base Price)を抽出する。"""
+    if not rate_description:
+        return None
+    m = _BASE_PRICE_RE.search(rate_description)
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
 def compute_booking_tax(booking):
     """1予約分の宿泊税を計算する。
 
-    戻り値: dict(total_tax, nights, guests, per_person_night_rate, label) または None
-    (対象外のステータス・不正な日付の場合)
+    可能な場合はBeds24のレート明細(rateDescription)から日別の実単価・清掃費を除いた
+    素泊まり料金を使い、取得できない場合は予約合計金額を泊数・人数で按分した平均単価を使う
+    (この場合は清掃費等が含まれたままになるため、やや過大評価になる可能性がある)。
+
+    戻り値: dict(total_tax, nights, guests, per_person_night_rate, label, rate_source) または
+    None(対象外のステータス・不正な日付の場合)
     """
     if booking.get("status") not in COUNTABLE_STATUSES:
         return None
@@ -104,16 +149,34 @@ def compute_booking_tax(booking):
 
     property_id = booking.get("propertyId")
     room_id = booking.get("roomId")
+    rate_description = booking.get("rateDescription") or ""
 
-    price = booking_amount(booking)
-    per_person_night_rate = price / nights / guests if price else 0
+    nightly_rates = parse_nightly_rates(rate_description, arrival, departure)
+    use_exact_nightly = len(nightly_rates) == nights
+
+    room_only_price = parse_room_only_price(rate_description)
+    if use_exact_nightly:
+        base_price = sum(nightly_rates.values())
+        rate_source = "日別実額(Booking.com)"
+    elif room_only_price is not None:
+        base_price = room_only_price
+        rate_source = "素泊まり額(Airbnb、清掃費除く)"
+    else:
+        base_price = booking_amount(booking)
+        rate_source = "滞在平均(清掃費等込みの概算)"
+
+    per_person_avg_rate = base_price / nights / guests if base_price else 0
 
     total = 0
     taxable_nights = 0
     d = arrival
     while d < departure:
         if is_taxable_on(property_id, room_id, d):
-            total += bracket_rate(per_person_night_rate, d) * guests
+            if use_exact_nightly and d in nightly_rates:
+                per_person_rate_today = nightly_rates[d] / guests
+            else:
+                per_person_rate_today = per_person_avg_rate
+            total += bracket_rate(per_person_rate_today, d) * guests
             taxable_nights += 1
         d += dt.timedelta(days=1)
 
@@ -125,6 +188,7 @@ def compute_booking_tax(booking):
         "nights": nights,
         "taxable_nights": taxable_nights,
         "guests": guests,
-        "per_person_night_rate": round(per_person_night_rate),
-        "label": bracket_label(per_person_night_rate, arrival),
+        "per_person_night_rate": round(per_person_avg_rate),
+        "label": bracket_label(per_person_avg_rate, arrival),
+        "rate_source": rate_source,
     }

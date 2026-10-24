@@ -144,16 +144,32 @@ def load_bookings(arrival_from, arrival_to):
 
 
 try:
-    properties = load_properties()
+    all_properties = load_properties()
 except Beds24Error as e:
     st.error(f"物件情報の取得でエラーが発生しました: {e}")
     st.stop()
 
+with st.sidebar:
+    st.header("物件フィルター")
+    all_property_names = [p.get("name") for p in all_properties]
+    selected_property_names = st.multiselect(
+        "表示する物件(未選択=全物件)", all_property_names
+    )
+
+properties = (
+    [p for p in all_properties if p.get("name") in selected_property_names]
+    if selected_property_names
+    else all_properties
+)
+selected_property_ids = {p.get("id") for p in properties}
+
 try:
-    bookings = load_bookings(date_from.isoformat(), date_to.isoformat())
+    bookings_all = load_bookings(date_from.isoformat(), date_to.isoformat())
 except Beds24Error as e:
     st.error(f"予約情報の取得でエラーが発生しました: {e}")
     st.stop()
+
+bookings = [b for b in bookings_all if b.get("propertyId") in selected_property_ids]
 
 name_map = property_name_map(properties)
 room_labels = unit_label_map(properties)
@@ -729,6 +745,9 @@ with tab_tax:
         "見直し後の制度(2027/4/1宿泊分〜、簡易宿所・民泊も課税対象に追加)から対象になります。"
         " 税率は現行(1人1泊1万円未満非課税、1万〜1.5万円未満100円、1.5万円以上200円)と"
         "見直し後(1万3千円未満非課税、それ以上は宿泊料金の3%)に対応しています。"
+        " 単価は、Booking.comは日別の実単価、Airbnbは清掃費を除いた素泊まり額が取得できる"
+        "場合はそちらを優先し、取得できない場合のみ予約合計金額(清掃費等込み)を泊数・人数で"
+        "割った概算値を使います(下表「単価の根拠」列で確認できます)。"
         " あくまで概算です。正式な申告には東京都主税局の最新情報を必ずご確認ください。"
     )
 
@@ -782,6 +801,7 @@ with tab_tax:
                     "泊数": result["nights"],
                     "人数": result["guests"],
                     "1人1泊単価(目安)": f"¥{result['per_person_night_rate']:,.0f}",
+                    "単価の根拠": result["rate_source"],
                     "税区分": result["label"],
                     "宿泊税額": f"¥{result['total_tax']:,.0f}",
                 }
