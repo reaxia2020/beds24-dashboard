@@ -277,6 +277,7 @@ with tab_calendar:
     room_keys.sort(key=lambda k: (name_map.get(k[0], ""), room_labels[k]))
 
     row_data = {}
+    cell_booking = {}
     rows_order = []
     for k in room_keys:
         label = room_labels[k]
@@ -300,6 +301,7 @@ with tab_calendar:
         for i, d in enumerate(date_list):
             if arrival <= d < departure:
                 row_data[label][i] = guest
+                cell_booking[(label, date_cols[i])] = b
 
     if not rows_order:
         st.info("表示できる部屋がありません。")
@@ -311,8 +313,38 @@ with tab_calendar:
         def highlight_booked(val):
             return "background-color: #ffd6d6" if val else ""
 
-        st.dataframe(cal_df.style.map(highlight_booked), use_container_width=True)
-        st.caption("色付きのマスは予約で埋まっている日です(ステータスが new/confirmed の予約のみ反映)。")
+        event = st.dataframe(
+            cal_df.style.map(highlight_booked),
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="single-cell",
+            key="calendar_grid",
+        )
+        st.caption(
+            "色付きのマスは予約で埋まっている日です(ステータスが new/confirmed の予約のみ反映)。"
+            " マスをクリックすると、その予約の詳細(人数・国籍・料金)を下に表示します。"
+        )
+
+        selected_cells = event.selection.cells if event and event.selection else []
+        if selected_cells:
+            row_idx, col_name = selected_cells[0]
+            label = rows_order[row_idx]
+            b = cell_booking.get((label, col_name))
+            if b is None:
+                st.info("この日は空室です。")
+            else:
+                st.markdown(f"#### {label} — {col_name} の予約詳細")
+                d1, d2, d3, d4 = st.columns(4)
+                guests = int(b.get("numAdult") or 0) + int(b.get("numChild") or 0)
+                d1.metric("宿泊人数", f"{guests}人")
+                d2.metric("国籍", (b.get("country") or "不明").upper())
+                d3.metric("料金", f"¥{booking_amount(b):,.0f}" if booking_amount(b) else "不明")
+                d4.metric("チャネル", b.get("referer") or "不明")
+                st.caption(
+                    f"ゲスト: {b.get('firstName', '')} {b.get('lastName', '')} / "
+                    f"チェックイン: {b.get('arrival')} / チェックアウト: {b.get('departure')} / "
+                    f"ステータス: {b.get('status')}"
+                )
 
 with tab_revenue:
     st.subheader("売上サマリー")
