@@ -88,6 +88,33 @@ def booking_amount(booking):
     return total if found else None
 
 
+COUNTRY_NAMES_JA = {
+    "JP": "日本", "US": "アメリカ", "GB": "イギリス", "CA": "カナダ", "AU": "オーストラリア",
+    "NZ": "ニュージーランド", "FR": "フランス", "DE": "ドイツ", "IT": "イタリア", "ES": "スペイン",
+    "PT": "ポルトガル", "NL": "オランダ", "BE": "ベルギー", "CH": "スイス", "AT": "オーストリア",
+    "SE": "スウェーデン", "NO": "ノルウェー", "DK": "デンマーク", "FI": "フィンランド", "IE": "アイルランド",
+    "PL": "ポーランド", "CZ": "チェコ", "GR": "ギリシャ", "RU": "ロシア", "UA": "ウクライナ",
+    "CN": "中国", "TW": "台湾", "HK": "香港", "KR": "韓国", "KP": "北朝鮮",
+    "TH": "タイ", "VN": "ベトナム", "PH": "フィリピン", "MY": "マレーシア", "SG": "シンガポール",
+    "ID": "インドネシア", "IN": "インド", "PK": "パキスタン", "BD": "バングラデシュ", "LK": "スリランカ",
+    "AE": "アラブ首長国連邦", "SA": "サウジアラビア", "IL": "イスラエル", "TR": "トルコ", "QA": "カタール",
+    "EG": "エジプト", "ZA": "南アフリカ", "NG": "ナイジェリア", "KE": "ケニア", "MA": "モロッコ",
+    "BR": "ブラジル", "MX": "メキシコ", "AR": "アルゼンチン", "CL": "チリ", "CO": "コロンビア",
+    "PE": "ペルー", "CU": "キューバ",
+    "MN": "モンゴル", "KZ": "カザフスタン", "AM": "アルメニア", "GE": "ジョージア",
+    "RO": "ルーマニア", "HU": "ハンガリー", "BG": "ブルガリア", "HR": "クロアチア", "RS": "セルビア",
+    "SK": "スロバキア", "SI": "スロベニア", "IS": "アイスランド", "LU": "ルクセンブルク",
+    "MO": "マカオ", "BN": "ブルネイ", "KH": "カンボジア", "LA": "ラオス", "MM": "ミャンマー",
+    "NP": "ネパール",
+}
+
+
+def country_name_ja(code):
+    if not code:
+        return "不明"
+    return COUNTRY_NAMES_JA.get(code.upper(), code.upper())
+
+
 def property_name_map(properties):
     return {p.get("id"): p.get("name", "不明") for p in properties}
 
@@ -276,6 +303,12 @@ with tab_calendar:
     room_keys = [k for k in room_labels if k[0] in selected_property_ids]
     room_keys.sort(key=lambda k: (name_map.get(k[0], ""), room_labels[k]))
 
+    CHANNEL_COLORS = {
+        "Booking.com": "#cfe2ff",
+        "Airbnb": "#ffd6d6",
+    }
+    DEFAULT_CHANNEL_COLOR = "#e5e5e5"
+
     row_data = {}
     cell_booking = {}
     rows_order = []
@@ -310,18 +343,26 @@ with tab_calendar:
             [row_data[label] for label in rows_order], index=rows_order, columns=date_cols
         )
 
-        def highlight_booked(val):
-            return "background-color: #ffd6d6" if val else ""
+        def style_grid(_data):
+            styles = pd.DataFrame("", index=cal_df.index, columns=cal_df.columns)
+            for label in rows_order:
+                for col in date_cols:
+                    b = cell_booking.get((label, col))
+                    if b is None:
+                        continue
+                    color = CHANNEL_COLORS.get(b.get("referer"), DEFAULT_CHANNEL_COLOR)
+                    styles.loc[label, col] = f"background-color: {color}"
+            return styles
 
         event = st.dataframe(
-            cal_df.style.map(highlight_booked),
+            cal_df.style.apply(style_grid, axis=None),
             use_container_width=True,
             on_select="rerun",
             selection_mode="single-cell",
             key="calendar_grid",
         )
         st.caption(
-            "色付きのマスは予約で埋まっている日です(ステータスが new/confirmed の予約のみ反映)。"
+            "🟦 Booking.com　🟥 Airbnb　⬜ その他のチャネル(ステータスが new/confirmed の予約のみ反映)。"
             " マスをクリックすると、その予約の詳細(人数・国籍・料金)を下に表示します。"
         )
 
@@ -337,7 +378,7 @@ with tab_calendar:
                 d1, d2, d3, d4 = st.columns(4)
                 guests = int(b.get("numAdult") or 0) + int(b.get("numChild") or 0)
                 d1.metric("宿泊人数", f"{guests}人")
-                d2.metric("国籍", (b.get("country") or "不明").upper())
+                d2.metric("国籍", country_name_ja(b.get("country")))
                 d3.metric("料金", f"¥{booking_amount(b):,.0f}" if booking_amount(b) else "不明")
                 d4.metric("チャネル", b.get("referer") or "不明")
                 st.caption(
