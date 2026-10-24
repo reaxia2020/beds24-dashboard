@@ -1,0 +1,67 @@
+{
+  "328093": {
+    "airbnb": {
+      "superhost": false,
+      "rating": 4.6,
+      "reviews": 40
+    },
+    "booking": {
+      "genius_level": 0,
+      "rating": 8.32,
+      "reviews": 22
+    },
+    "updated": "2026-10-24"
+  },
+  "341983": {
+    "airbnb": {
+      "superhost": true,
+      "rating": 4.5,
+      "reviews": 4
+    },
+    "booking": {
+      "genius_level": 0,
+      "rating": 8.0,
+      "reviews": 1
+    },
+    "updated": "2026-10-24"
+  },
+  "328094": {
+    "airbnb": {
+      "superhost": false,
+      "rating": 4.75,
+      "reviews": 12
+    },
+    "booking": {
+      "genius_level": 0,
+      "rating": 9.0,
+      "reviews": 10
+    },
+    "updated": "2026-10-24"
+  },
+  "329645": {
+    "airbnb": {
+      "superhost": true,
+      "rating": 4.8,
+      "reviews": 15
+    },
+    "booking": {
+      "genius_level": 0,
+      "rating": 9.4,
+      "reviews": 9
+    },
+    "updated": "2026-10-24"
+  },
+  "329647": {
+    "airbnb": {
+      "superhost": true,
+      "rating": 4.91,
+      "reviews": 22
+    },
+    "booking": {
+      "genius_level": 0,
+      "rating": 10.0,
+      "reviews": 1
+    },
+    "updated": "2026-10-24"
+  }
+}
