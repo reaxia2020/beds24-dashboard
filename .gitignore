@@ -4,3 +4,4 @@ __pycache__/
 .token_cache.json
 .venv/
 streamlit.log
+expenses.json

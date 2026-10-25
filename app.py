@@ -880,7 +880,19 @@ with tab_profit:
         ("粗利", "gross_profit", "¥"),
     ]
 
-    def build_table(metrics_by_month):
+    def target_status(revenue, rent):
+        if not rent:
+            return "-"
+        ratio = revenue / rent
+        if ratio >= 3:
+            return f"🟢 {ratio:.1f}倍(目標達成)"
+        if ratio >= 2:
+            return f"🟡 {ratio:.1f}倍(最低ライン)"
+        if ratio >= 1.5:
+            return f"🟠 {ratio:.1f}倍(閑散期最低)"
+        return f"🔴 {ratio:.1f}倍(目標未達)"
+
+    def build_table(metrics_by_month, rent=None):
         table = {}
         for mk in month_keys:
             m = metrics_by_month[mk]
@@ -893,18 +905,23 @@ with tab_profit:
                     col[label] = f"(¥{val:,.0f})" if val else "-"
                 else:
                     col[label] = f"{val:,.0f}"
+            if rent:
+                col["売上目標達成度"] = target_status(m["revenue"], rent)
             table[mk] = col
         return pd.DataFrame(table)
 
+    total_rent = sum(float(expenses.get(str(pid), {}).get("rent") or 0) for pid in prop_ids)
+
     st.markdown("#### 全物件合計")
-    st.dataframe(build_table(pnl["_total"]), use_container_width=True)
+    st.dataframe(build_table(pnl["_total"], rent=total_rent), use_container_width=True)
 
     for p in properties:
         pid = p.get("id")
         if pid not in pnl:
             continue
+        p_rent = float(expenses.get(str(pid), {}).get("rent") or 0)
         st.markdown(f"#### 🏠 {p.get('name')}")
-        st.dataframe(build_table(pnl[pid]), use_container_width=True)
+        st.dataframe(build_table(pnl[pid], rent=p_rent), use_container_width=True)
 
     csv_rows = []
     for pid in list(prop_ids) + ["_total"]:
@@ -924,6 +941,8 @@ with tab_profit:
         "入金額 = 売上 − OTA手数料(Beds24の commission フィールド)。"
         " 粗利 = 入金額 − 家賃 − 清掃費(1予約あたり×予約件数) − 固定費 − 変動費(売上×変動費率)。"
         " 予約件数はチェックイン月でカウントします。"
+        " 売上目標達成度は「売上 ÷ 家賃」の倍率で判定: 🟢3倍以上(目標)、🟡2倍以上(最低ライン)、"
+        "🟠1.5倍以上(閑散期の最低ライン)、🔴1.5倍未満(目標未達)。"
     )
 
 with tab_tax:
