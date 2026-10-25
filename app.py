@@ -789,7 +789,22 @@ with tab_profit:
         "経費を引いた実際の粗利を月別に自動計算します。月をまたぐ予約は泊数で日割りして按分します。"
     )
 
-    expenses = finance.load_expenses()
+    def load_expenses_merged():
+        """ローカルの expenses.json は非公開リポジトリに含められないため、
+        Streamlit CloudのSecrets([expenses]セクション)を優先的なデータ源とし、
+        ローカルファイルがあればそちらで上書きする(ローカル開発時の利便性のため)。"""
+        merged = {}
+        try:
+            secret_expenses = st.secrets.get("expenses")
+        except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+            secret_expenses = None
+        if secret_expenses:
+            for pid, vals in dict(secret_expenses).items():
+                merged[str(pid)] = dict(vals)
+        merged.update(finance.load_expenses())
+        return merged
+
+    expenses = load_expenses_merged()
 
     with st.expander("経費設定(物件ごと)"):
         profit_options = {p.get("name"): str(p.get("id")) for p in properties}
