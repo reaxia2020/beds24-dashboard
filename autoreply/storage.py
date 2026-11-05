@@ -1,124 +1,127 @@
+"""処理済みメッセージ・送信済み催促の記録。
+
+Render無料プランのディスクは再起動のたびに消えるため、SQLiteではなく
+Googleスプレッドシート(autoreply_state)に保存する。"""
 import datetime as dt
-import sqlite3
-from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "autoreply.db"
+from .google_sheets import get_sheet_client
+from .state_sheet import STATE_SHEET
+
+_gc = None
+_sh = None
+_messages_ws = None
+_reminders_ws = None
 
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _client():
+    global _gc
+    if _gc is None:
+        _gc = get_sheet_client()
+    return _gc
+
+
+def _spreadsheet():
+    global _sh
+    if _sh is None:
+        _sh = _client().open_by_key(STATE_SHEET["spreadsheet_id"])
+    return _sh
+
+
+def _messages_sheet():
+    global _messages_ws
+    if _messages_ws is None:
+        _messages_ws = _spreadsheet().get_worksheet_by_id(STATE_SHEET["messages_gid"])
+    return _messages_ws
+
+
+def _reminders_sheet():
+    global _reminders_ws
+    if _reminders_ws is None:
+        _reminders_ws = _spreadsheet().get_worksheet_by_id(STATE_SHEET["reminders_gid"])
+    return _reminders_ws
 
 
 def init_db():
-    conn = get_conn()
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            beds24_message_id INTEGER UNIQUE,
-            property_id INTEGER,
-            booking_id INTEGER,
-            guest_message TEXT,
-            category TEXT,
-            draft_reply TEXT,
-            auto_sent INTEGER DEFAULT 0,
-            created_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS registry_reminders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            booking_id INTEGER,
-            tier TEXT,
-            sent_date TEXT,
-            sent_at TEXT,
-            UNIQUE(booking_id, sent_date)
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+    """互換性のために残しているが、シート側は事前にヘッダー行を作成済みなので何もしない。"""
+    pass
 
 
-def reminder_already_sent_today(booking_id, sent_date):
-    """その予約に対して、指定の日(YYYY-MM-DD)に既に催促を送っているか。
-    未提出が続く限り、この予約の名簿情報が無いと宿泊できないため、1日1回まで毎日送り続ける。"""
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT 1 FROM registry_reminders WHERE booking_id = ? AND sent_date = ?",
-        (booking_id, sent_date),
-    ).fetchone()
-    conn.close()
-    return row is not None
-
-
-def mark_reminder_sent(booking_id, tier, sent_date):
-    conn = get_conn()
-    conn.execute(
-        "INSERT OR IGNORE INTO registry_reminders (booking_id, tier, sent_date, sent_at) "
-        "VALUES (?, ?, ?, ?)",
-        (booking_id, tier, sent_date, dt.datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-
-def list_reminders(limit=200):
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM registry_reminders ORDER BY sent_at DESC LIMIT ?", (limit,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+def get_processed_ids():
+    """既に記録済みのbeds24_message_idの集合を1回のAPI呼び出しで取得する。
+    メッセージ毎にAPIを呼ぶとSheets APIのレート制限にすぐ達するため、
+    ループの外で1回だけ呼び、メモリ上の集合でチェックすること。"""
+    col = _messages_sheet().col_values(1)
+    return set(col[1:])
 
 
 def is_processed(beds24_message_id):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT 1 FROM messages WHERE beds24_message_id = ?", (beds24_message_id,)
-    ).fetchone()
-    conn.close()
-    return row is not None
+    """単発確認用。大量のメッセージをループでチェックする場合はget_processed_idsを使うこと。"""
+    return str(beds24_message_id) in get_processed_ids()
 
 
 def save_message(
     beds24_message_id, property_id, booking_id, guest_message, category, draft_reply, auto_sent
 ):
-    conn = get_conn()
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO messages
-            (beds24_message_id, property_id, booking_id, guest_message, category,
-             draft_reply, auto_sent, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
+    """呼び出し側で既に未処理と確認済みの前提で、確認なしに追記する
+    (ループ内で毎回is_processedを呼ぶとレート制限に達するため)。"""
+    _messages_sheet().append_row(
+        [
             beds24_message_id,
             property_id,
             booking_id,
-            guest_message,
+            guest_message or "",
             category,
-            draft_reply,
-            1 if auto_sent else 0,
+            draft_reply or "",
+            "TRUE" if auto_sent else "FALSE",
             dt.datetime.utcnow().isoformat(),
-        ),
+        ],
+        value_input_option="USER_ENTERED",
     )
-    conn.commit()
-    conn.close()
+
+
+def save_messages_bulk(rows):
+    """[(beds24_message_id, property_id, booking_id, guest_message, category,
+    draft_reply, auto_sent, created_at), ...] をまとめて追記する(初期シード用)。"""
+    if rows:
+        _messages_sheet().append_rows(list(rows), value_input_option="USER_ENTERED")
 
 
 def list_messages(limit=200):
-    """レビュー対象のメッセージ一覧。seed_baseline.pyで登録した過去分(baseline_seed)は
-    単なる重複防止用の記録であり、レビュー対象ではないため除外する。"""
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM messages WHERE category != 'baseline_seed' "
-        "ORDER BY created_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    records = _messages_sheet().get_all_records()
+    records = [r for r in records if r.get("category") != "baseline_seed"]
+    records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+    out = []
+    for r in records[:limit]:
+        out.append(
+            {
+                "created_at": r.get("created_at"),
+                "property_id": r.get("property_id"),
+                "booking_id": r.get("booking_id"),
+                "guest_message": r.get("guest_message"),
+                "category": r.get("category"),
+                "draft_reply": r.get("draft_reply"),
+                "auto_sent": r.get("auto_sent") == "TRUE",
+            }
+        )
+    return out
+
+
+def reminder_already_sent_today(booking_id, sent_date):
+    records = _reminders_sheet().get_all_records()
+    return any(
+        str(r.get("booking_id")) == str(booking_id) and r.get("sent_date") == sent_date
+        for r in records
+    )
+
+
+def mark_reminder_sent(booking_id, tier, sent_date):
+    _reminders_sheet().append_row(
+        [booking_id, tier, sent_date, dt.datetime.utcnow().isoformat()],
+        value_input_option="USER_ENTERED",
+    )
+
+
+def list_reminders(limit=200):
+    records = _reminders_sheet().get_all_records()
+    records.sort(key=lambda r: r.get("sent_at", ""), reverse=True)
+    return records[:limit]

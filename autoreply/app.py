@@ -61,6 +61,9 @@ def process_new_messages():
     auto_send_enabled = os.environ.get("AUTO_SEND_ENABLED", "false").strip().lower() == "true"
     processed = []
 
+    # メッセージ毎にAPIを呼ぶとSheets APIのレート制限にすぐ達するため、1回だけ取得する
+    processed_ids = storage.get_processed_ids()
+
     for property_id in PROPERTY_IDS:
         try:
             msgs = client.get_messages(propertyId=property_id)
@@ -71,8 +74,9 @@ def process_new_messages():
         guest_msgs = [m for m in msgs if m.get("source") == "guest"]
         for m in guest_msgs:
             beds24_message_id = m.get("id")
-            if storage.is_processed(beds24_message_id):
+            if str(beds24_message_id) in processed_ids:
                 continue
+            processed_ids.add(str(beds24_message_id))
 
             booking_id = m.get("bookingId")
             booking_context = booking_context_for(booking_id, property_id)

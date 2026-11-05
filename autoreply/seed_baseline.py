@@ -7,6 +7,7 @@ process_new_messages() は「DBに記録のないゲストメッセージ」を�
 
 使い方: python -m autoreply.seed_baseline
 """
+import datetime as dt
 import sys
 from pathlib import Path
 
@@ -21,8 +22,8 @@ PROPERTY_IDS = [328093, 328094, 329645, 329647, 341983]
 def main():
     storage.init_db()
     client = Beds24Client()
-    total_seeded = 0
-    total_skipped = 0
+    existing_ids = set(storage._messages_sheet().col_values(1)[1:])
+    rows_to_add = []
 
     for property_id in PROPERTY_IDS:
         page = 1
@@ -35,25 +36,28 @@ def main():
                 if m.get("source") != "guest":
                     continue
                 beds24_message_id = m.get("id")
-                if storage.is_processed(beds24_message_id):
-                    total_skipped += 1
+                if str(beds24_message_id) in existing_ids:
                     continue
-                storage.save_message(
-                    beds24_message_id=beds24_message_id,
-                    property_id=property_id,
-                    booking_id=m.get("bookingId"),
-                    guest_message=m.get("message"),
-                    category="baseline_seed",
-                    draft_reply=None,
-                    auto_sent=False,
+                existing_ids.add(str(beds24_message_id))
+                rows_to_add.append(
+                    [
+                        beds24_message_id,
+                        property_id,
+                        m.get("bookingId"),
+                        m.get("message") or "",
+                        "baseline_seed",
+                        "",
+                        "FALSE",
+                        dt.datetime.utcnow().isoformat(),
+                    ]
                 )
-                total_seeded += 1
             if not msgs.get("pages", {}).get("nextPageExists"):
                 break
             page += 1
         print(f"property {property_id}: done")
 
-    print(f"seeded: {total_seeded}, already present: {total_skipped}")
+    storage.save_messages_bulk(rows_to_add)
+    print(f"seeded: {len(rows_to_add)}")
 
 
 if __name__ == "__main__":
