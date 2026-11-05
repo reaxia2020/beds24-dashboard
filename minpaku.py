@@ -1,3 +1,4 @@
+import calendar
 import datetime as dt
 
 ANNUAL_LIMIT_DAYS = 180
@@ -10,7 +11,12 @@ REGULATED_ROOMS = {
 }
 
 COUNTABLE_STATUSES = {"new", "confirmed"}
-MONTHLY_NIGHT_THRESHOLD = 30  # この泊数以上はマンスリー扱いとして民泊日数から除外
+
+
+def monthly_night_threshold(arrival):
+    """マンスリー扱いとして民泊日数から除外する最低泊数。
+    暦月1ヶ月分(到着日の月の日数。2月は28/29日)を基準とする。"""
+    return calendar.monthrange(arrival.year, arrival.month)[1]
 
 # 高需要期として民泊予算を優先確保しておきたい期間(例: 桜シーズン)
 # {表示名: [(開始日, 終了日), ...]}
@@ -74,8 +80,8 @@ def compute_room_status(client, room_id, today=None, reserved_windows=None):
             continue
         arrival = dt.date.fromisoformat(b["arrival"])
         departure = dt.date.fromisoformat(b["departure"])
-        if (departure - arrival).days >= MONTHLY_NIGHT_THRESHOLD:
-            # 30泊以上はマンスリー扱いとして民泊日数にカウントしない
+        if (departure - arrival).days >= monthly_night_threshold(arrival):
+            # 暦月1ヶ月分以上はマンスリー扱いとして民泊日数にカウントしない(2月は28/29泊)
             continue
         used_days += _overlap_nights(arrival, departure, fy_start, fy_end)
 

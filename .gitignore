@@ -6,3 +6,6 @@ __pycache__/
 streamlit.log
 expenses.json
 historical_revenue.json
+autoreply/autoreply.db
+autoreply/faq_knowledge.json
+autoreply/registry_sheets.json

@@ -112,12 +112,52 @@ class Beds24Client:
             raise Beds24Error(f"{path} の取得に失敗しました ({resp.status_code}): {resp.text}")
         return resp.json()
 
+    def _post(self, path, json_body):
+        self._ensure_token()
+        resp = requests.post(
+            f"{BASE_URL}{path}",
+            headers={
+                "token": self._token,
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+            json=json_body,
+            timeout=30,
+        )
+        if resp.status_code == 401:
+            self._token = None
+            self._ensure_token()
+            resp = requests.post(
+                f"{BASE_URL}{path}",
+                headers={
+                    "token": self._token,
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+                json=json_body,
+                timeout=30,
+            )
+        if not resp.ok:
+            raise Beds24Error(f"{path} の送信に失敗しました ({resp.status_code}): {resp.text}")
+        return resp.json()
+
     def get_properties(self, **params):
         data = self._get("/properties", params=params)
         return data.get("data", data)
 
     def get_bookings(self, **params):
         data = self._get("/bookings", params=params)
+        return data.get("data", data)
+
+    def get_messages(self, **params):
+        """ゲスト⇔ホストのメッセージ履歴を取得する。bookingId または propertyId で絞り込み可能。"""
+        data = self._get("/bookings/messages", params=params)
+        return data.get("data", [])
+
+    def send_message(self, booking_id, message):
+        """指定した予約にホストとしてメッセージを送信する。"""
+        payload = [{"bookingId": booking_id, "message": message}]
+        data = self._post("/bookings/messages", payload)
         return data.get("data", data)
 
     def get_airbnb_reviews(self, room_id):
