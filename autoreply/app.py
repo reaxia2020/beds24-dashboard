@@ -12,6 +12,7 @@ from beds24_client import Beds24Client  # noqa: E402
 from . import storage
 from .classifier import classify_and_draft
 from .faq_knowledge_loader import load_faq
+from .line_notify import notify_irregular
 
 PROPERTY_IDS = [328093, 328094, 329645, 329647, 341983]
 
@@ -108,6 +109,8 @@ def process_new_messages():
                     auto_sent = True
                 except Exception as e:
                     result["reason"] += f" / 自動送信失敗: {e}"
+            elif result["category"] == "irregular":
+                notify_irregular(property_id, booking_id, m.get("message"), result.get("reason"))
 
             storage.save_message(
                 beds24_message_id=beds24_message_id,

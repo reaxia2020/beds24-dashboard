@@ -34,13 +34,15 @@ COUNTABLE_STATUSES = {"new", "confirmed"}
 
 # 現行制度(〜2027/3/31宿泊分)の納税義務者は「旅館・ホテル」許可の施設のみで、
 # 簡易宿所・民泊許可の施設は見直し後(2027/4/1宿泊分〜)まで課税対象外。
-# ここには現行制度で課税対象(=旅館・ホテル許可)が確認できている (propertyId, roomId) のみを登録する。
-# The Nest Koenji 101 (680830, 民泊新法届出)・kiryo MODEビル・Kiryo Tama Riverside は
+# ここには現行制度で課税対象(=旅館・ホテル許可)が確認できている (propertyId, roomId, unitId) と、
+# その課税開始日(=許可証に記載の許可日)を登録する(2026-11-06 ユーザー指示)。
+# The Nest Koenji 101 (680830/unit1, 民泊新法届出)・kiryo MODEビル・Kiryo Tama Riverside は
 # 簡易宿所/民泊扱いのため、現行制度では対象外として扱う。
-CURRENTLY_TAXABLE_ROOMS = {
-    (328093, 680831),  # The Nest Koenji 103&201
-    (328093, 680832),  # The Nest Koenji 201
-    (328094, 680833),  # あやめマンション201
+# あやめマンション201(328094)は旅館業許可書がまだ見つかっておらず("一旦保留")、
+# 許可自体が未確認のため、見つかるまでここには登録しない(課税対象外として扱う)。
+TAXABLE_SINCE = {
+    (328093, 680831, 1): dt.date(2025, 12, 26),  # The Nest Koenji 103(許可日)
+    (328093, 680831, 2): dt.date(2025, 12, 26),  # The Nest Koenji 201(許可日)
 }
 
 
@@ -49,11 +51,12 @@ def is_tokyo_property(property_data):
     return "東京都" in city
 
 
-def is_taxable_on(property_id, room_id, on_date):
-    """その日の宿泊が宿泊税の課税対象施設かどうか(許可種別ベース)。"""
+def is_taxable_on(property_id, room_id, unit_id, on_date):
+    """その日の宿泊が宿泊税の課税対象施設かどうか(許可種別・営業開始日ベース)。"""
     if on_date >= REGIME_CHANGE_DATE:
         return True  # 見直し後は簡易宿所・民泊も課税対象に追加される
-    return (property_id, room_id) in CURRENTLY_TAXABLE_ROOMS
+    since = TAXABLE_SINCE.get((property_id, room_id, unit_id))
+    return since is not None and on_date >= since
 
 
 def bracket_rate(per_person_night_rate, on_date):
@@ -149,6 +152,7 @@ def compute_booking_tax(booking):
 
     property_id = booking.get("propertyId")
     room_id = booking.get("roomId")
+    unit_id = booking.get("unitId")
     rate_description = booking.get("rateDescription") or ""
 
     nightly_rates = parse_nightly_rates(rate_description, arrival, departure)
@@ -171,7 +175,7 @@ def compute_booking_tax(booking):
     taxable_nights = 0
     d = arrival
     while d < departure:
-        if is_taxable_on(property_id, room_id, d):
+        if is_taxable_on(property_id, room_id, unit_id, d):
             if use_exact_nightly and d in nightly_rates:
                 per_person_rate_today = nightly_rates[d] / guests
             else:
