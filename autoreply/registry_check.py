@@ -123,6 +123,7 @@ def main():
             print(f"sent {tier} reminder for booking {booking_id} (property {property_id})")
 
     print(f"done. reminders sent: {sent_count}")
+    return sent_count
 
 
 if __name__ == "__main__":

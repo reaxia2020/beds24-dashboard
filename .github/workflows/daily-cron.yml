@@ -1,0 +1,17 @@
+name: 宿泊者名簿 日次バッチ
+
+on:
+  schedule:
+    # 毎日 09:00 JST (00:00 UTC) に実行
+    - cron: "0 0 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /cron/daily on Render
+        run: |
+          curl -sS -X POST "https://beds24-dashboard.onrender.com/cron/daily" \
+            --max-time 120 --retry 3 --retry-delay 15 --retry-all-errors \
+            --fail-with-body

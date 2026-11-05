@@ -56,6 +56,7 @@ def main():
     faq = load_faq()
     client = Beds24Client()
     gc = get_sheet_client()
+    total_updates = 0
 
     for property_id in MULTI_ROOM_PROPERTIES:
         sheet_info = REGISTRY_SHEETS.get(property_id)
@@ -111,6 +112,9 @@ def main():
         if updates:
             ws.batch_update(updates, value_input_option="USER_ENTERED")
         print(f"property {property_id}: {len(updates)}件を判定・記入しました")
+        total_updates += len(updates)
+
+    return total_updates
 
 
 if __name__ == "__main__":

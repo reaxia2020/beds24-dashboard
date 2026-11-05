@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 sys.path.append(str(Path(__file__).parent.parent))
 from beds24_client import Beds24Client  # noqa: E402
 
-from . import storage
+from . import registry_check, registry_room_assign, storage
 from .classifier import classify_and_draft
 from .faq_knowledge_loader import load_faq
 from .line_notify import notify_irregular
@@ -140,6 +140,15 @@ def webhook_beds24(background_tasks: BackgroundTasks):
     処理に数秒〜十数秒かかるため、Webhook自体は即座に200を返し、処理はバックグラウンドで行う。"""
     background_tasks.add_task(process_new_messages)
     return {"status": "accepted"}
+
+
+@app.post("/cron/daily")
+def cron_daily():
+    """GitHub Actionsから1日1回呼び出される日次バッチ。宿泊者名簿の部屋自動判定と、
+    未提出者への催促送信を行う(催促は実際にゲストへ送信される)。"""
+    room_assign_updates = registry_room_assign.main()
+    reminders_sent = registry_check.main()
+    return {"room_assign_updates": room_assign_updates, "reminders_sent": reminders_sent}
 
 
 @app.get("/review", response_class=HTMLResponse)
