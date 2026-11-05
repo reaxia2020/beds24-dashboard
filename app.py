@@ -48,6 +48,7 @@ if not check_password():
     st.stop()
 
 OTA_METRICS_PATH = Path(__file__).parent / "ota_metrics.json"
+HISTORICAL_REVENUE_PATH = Path(__file__).parent / "historical_revenue.json"
 
 # AirROIの比較検索に使う物件スペック(寝室数・定員・バスルーム数)
 PROPERTY_SPECS = {
@@ -142,6 +143,25 @@ def load_ota_metrics():
     if OTA_METRICS_PATH.exists():
         return json.loads(OTA_METRICS_PATH.read_text())
     return {}
+
+
+def load_historical_revenue():
+    """Beds24接続前(Airbnb/Booking.comの管理画面から取得した実績)の月別売上。
+    {str(propertyId): {"YYYY-MM": revenue}}。
+    ローカルファイルは非公開リポジトリに含められないため、Streamlit Cloudの
+    Secrets([historical_revenue]セクション)を優先データ源とし、ローカルファイルが
+    あればそちらで上書きする(ローカル開発時の利便性のため)。"""
+    merged = {}
+    try:
+        secret_data = st.secrets.get("historical_revenue")
+    except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+        secret_data = None
+    if secret_data:
+        for pid, months in dict(secret_data).items():
+            merged[str(pid)] = dict(months)
+    if HISTORICAL_REVENUE_PATH.exists():
+        merged.update(json.loads(HISTORICAL_REVENUE_PATH.read_text()))
+    return merged
 
 
 def save_ota_metrics(data):
@@ -882,6 +902,44 @@ with tab_profit:
 
     pnl = finance.compute_monthly_pnl(bookings_by_property, expenses, month_keys)
 
+    # 前年同月比較用のデータ(月ごとに1年前の同月と比べる)
+    prev_month_keys = [f"{int(mk[:4]) - 1}-{mk[5:7]}" for mk in month_keys]
+    prev_window_start = dt.date(window_start.year - 1, window_start.month, 1)
+    prev_last_month = dt.date.fromisoformat(prev_month_keys[-1] + "-01")
+    prev_window_end = (
+        dt.date(prev_last_month.year + 1, 1, 1) if prev_last_month.month == 12
+        else dt.date(prev_last_month.year, prev_last_month.month + 1, 1)
+    ) - dt.timedelta(days=1)
+
+    try:
+        bookings_by_property_prev = load_profit_bookings(
+            prop_ids,
+            (prev_window_start - dt.timedelta(days=90)).isoformat(),
+            prev_window_end.isoformat(),
+        )
+    except Beds24Error as e:
+        st.error(f"前年同月データの取得に失敗しました: {e}")
+        bookings_by_property_prev = {}
+
+    pnl_prev = finance.compute_monthly_pnl(bookings_by_property_prev, expenses, prev_month_keys)
+
+    # Beds24接続前の月はBeds24にデータがないため、Airbnb/Booking.comの実績(historical_revenue.json)で補う
+    historical_revenue = load_historical_revenue()
+
+    def get_prev_revenue(prev_mk, prev_metrics_by_month, historical_pid):
+        beds24_val = (
+            prev_metrics_by_month.get(prev_mk, {}).get("revenue", 0)
+            if prev_metrics_by_month
+            else 0
+        )
+        if beds24_val:
+            return beds24_val
+        if historical_pid == "_total":
+            return sum(
+                historical_revenue.get(str(pid), {}).get(prev_mk, 0) for pid in prop_ids
+            )
+        return historical_revenue.get(str(historical_pid), {}).get(prev_mk, 0)
+
     metric_rows = [
         ("売上", "revenue", "¥"),
         ("OTA手数料", "commission", "¥-"),
@@ -907,7 +965,7 @@ with tab_profit:
             return f"🟠 {ratio:.1f}倍(閑散期最低)"
         return f"🔴 {ratio:.1f}倍(目標未達)"
 
-    def build_table(metrics_by_month, rent=None):
+    def build_table(metrics_by_month, rent=None, prev_metrics_by_month=None, historical_pid=None):
         table = {}
         for mk in month_keys:
             m = metrics_by_month[mk]
@@ -920,6 +978,16 @@ with tab_profit:
                     col[label] = f"(¥{val:,.0f})" if val else "-"
                 else:
                     col[label] = f"{val:,.0f}"
+                if key == "revenue" and historical_pid is not None:
+                    prev_mk = f"{int(mk[:4]) - 1}-{mk[5:7]}"
+                    prev_revenue = get_prev_revenue(prev_mk, prev_metrics_by_month, historical_pid)
+                    col["前年同月売上"] = f"¥{prev_revenue:,.0f}"
+                    if prev_revenue:
+                        pct = (val / prev_revenue - 1) * 100
+                        arrow = "▲" if pct >= 0 else "▼"
+                        col["前年同月比"] = f"{arrow}{abs(pct):.0f}%"
+                    else:
+                        col["前年同月比"] = "-(前年データなし)"
             if rent:
                 col["売上目標達成度"] = target_status(m["revenue"], rent)
             table[mk] = col
@@ -928,7 +996,13 @@ with tab_profit:
     total_rent = sum(float(expenses.get(str(pid), {}).get("rent") or 0) for pid in prop_ids)
 
     st.markdown("#### 全物件合計")
-    st.dataframe(build_table(pnl["_total"], rent=total_rent), use_container_width=True)
+    st.dataframe(
+        build_table(
+            pnl["_total"], rent=total_rent, prev_metrics_by_month=pnl_prev["_total"],
+            historical_pid="_total",
+        ),
+        use_container_width=True,
+    )
 
     for p in properties:
         pid = p.get("id")
@@ -936,7 +1010,13 @@ with tab_profit:
             continue
         p_rent = float(expenses.get(str(pid), {}).get("rent") or 0)
         st.markdown(f"#### 🏠 {p.get('name')}")
-        st.dataframe(build_table(pnl[pid], rent=p_rent), use_container_width=True)
+        st.dataframe(
+            build_table(
+                pnl[pid], rent=p_rent, prev_metrics_by_month=pnl_prev.get(pid, {}),
+                historical_pid=pid,
+            ),
+            use_container_width=True,
+        )
 
     csv_rows = []
     for pid in list(prop_ids) + ["_total"]:
@@ -958,6 +1038,10 @@ with tab_profit:
         " 予約件数はチェックイン月でカウントします。"
         " 売上目標達成度は「売上 ÷ 家賃」の倍率で判定: 🟢3倍以上(目標)、🟡2倍以上(最低ライン)、"
         "🟠1.5倍以上(閑散期の最低ライン)、🔴1.5倍未満(目標未達)。"
+        " 前年同月比は、各月の売上を1年前の同じ月と比べたものです(▲=増加、▼=減少)。"
+        "Beds24接続前(2026年5月頃より前)の月はBeds24にデータがないため、"
+        "Airbnb・Booking.comの管理画面から取得した実績(2026年10月28日時点)で補っています。"
+        "前年にその月のデータがない場合は「前年データなし」と表示します。"
     )
 
 with tab_tax:

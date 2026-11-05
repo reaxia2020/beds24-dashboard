@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 streamlit.log
 expenses.json
+historical_revenue.json
