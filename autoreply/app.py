@@ -1,4 +1,5 @@
 import base64
+import datetime as dt
 import hashlib
 import hmac
 import json
@@ -213,6 +214,128 @@ def cron_daily():
     room_assign_updates = registry_room_assign.main()
     reminders_sent = registry_check.main()
     return {"room_assign_updates": room_assign_updates, "reminders_sent": reminders_sent}
+
+
+def build_cleaning_schedule(days_ahead=21):
+    """今日から指定日数分の、物件・部屋ごとのチェックアウト(清掃要)予定を作る。
+    同じ部屋に同日中に次のゲストが入る場合は、清掃会社が優先度を判断できるよう
+    「同日チェックイン」フラグを立てる。"""
+    faq = load_faq()
+    today = dt.date.today()
+    horizon = today + dt.timedelta(days=days_ahead)
+    rows = []
+
+    for property_id in PROPERTY_IDS:
+        entry = faq.get("properties", {}).get(str(property_id), {})
+        property_name = entry.get("name", str(property_id))
+
+        departures = client.get_bookings(
+            propertyId=property_id,
+            departureFrom=today.isoformat(),
+            departureTo=horizon.isoformat(),
+        )
+        departures = [b for b in departures if b.get("status") not in ("black", "cancelled")]
+
+        arrivals = client.get_bookings(
+            propertyId=property_id,
+            arrivalFrom=today.isoformat(),
+            arrivalTo=horizon.isoformat(),
+        )
+        arrivals = [a for a in arrivals if a.get("status") not in ("black", "cancelled")]
+        same_day_arrival_keys = {
+            (a.get("roomId"), a.get("unitId"), a.get("arrival")) for a in arrivals
+        }
+
+        for b in departures:
+            room_id, unit_id = b.get("roomId"), b.get("unitId")
+            room_label = resolve_room_label(entry, room_id, unit_id) or entry.get(
+                "room", ""
+            ).split("。")[0]
+            guests = (b.get("numAdult") or 0) + (b.get("numChild") or 0)
+            rows.append(
+                {
+                    "date": b.get("departure"),
+                    "property": property_name,
+                    "room": room_label,
+                    "guests": guests,
+                    "same_day_checkin": (room_id, unit_id, b.get("departure"))
+                    in same_day_arrival_keys,
+                }
+            )
+
+    rows.sort(key=lambda r: (r["date"], r["property"], r["room"]))
+    return rows
+
+
+@app.get("/cleaning-schedule", response_class=HTMLResponse)
+def cleaning_schedule():
+    """清掃会社にそのまま共有するための、ログイン不要の清掃予定ページ。
+    今日から3週間分のチェックアウト予定を日付ごとにまとめて表示する。"""
+    rows = build_cleaning_schedule()
+
+    by_date = {}
+    for r in rows:
+        by_date.setdefault(r["date"], []).append(r)
+
+    sections = ""
+    today_str = dt.date.today().isoformat()
+    for date_str in sorted(by_date.keys()):
+        items = by_date[date_str]
+        is_today = date_str == today_str
+        rows_html = ""
+        for item in items:
+            badge = (
+                '<span class="badge">同日チェックインあり</span>'
+                if item["same_day_checkin"]
+                else ""
+            )
+            rows_html += f"""
+            <li>
+                <span class="property">{escape(item["property"])}</span>
+                <span class="room">{escape(str(item["room"]))}</span>
+                <span class="guests">{item["guests"]}名</span>
+                {badge}
+            </li>
+            """
+        sections += f"""
+        <section class="{"today" if is_today else ""}">
+            <h2>{escape(date_str)}{" (本日)" if is_today else ""}</h2>
+            <ul>{rows_html}</ul>
+        </section>
+        """
+
+    html = f"""
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>清掃スケジュール</title>
+        <style>
+            body {{ font-family: sans-serif; margin: 0; padding: 12px; background: #f7f7f7; }}
+            h1 {{ font-size: 20px; }}
+            p.note {{ color: #666; font-size: 13px; }}
+            section {{ background: #fff; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
+                       box-shadow: 0 1px 2px rgba(0,0,0,0.1); }}
+            section.today {{ border: 2px solid #2b8cbe; }}
+            h2 {{ font-size: 16px; margin: 4px 0 8px; }}
+            ul {{ list-style: none; padding: 0; margin: 0; }}
+            li {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+                  padding: 6px 0; border-top: 1px solid #eee; font-size: 14px; }}
+            li:first-child {{ border-top: none; }}
+            .property {{ font-weight: bold; min-width: 160px; }}
+            .room {{ color: #333; }}
+            .guests {{ color: #888; }}
+            .badge {{ background: #ffefc2; color: #8a6d00; border-radius: 4px; padding: 2px 6px;
+                      font-size: 12px; }}
+        </style>
+    </head>
+    <body>
+        <h1>清掃スケジュール</h1>
+        <p class="note">チェックアウト日(清掃対応日)の一覧です。このページは常に最新の予約状況を表示します。</p>
+        {sections if sections else "<p>今後3週間のチェックアウト予定はありません。</p>"}
+    </body>
+    </html>
+    """
+    return html
 
 
 @app.get("/review", response_class=HTMLResponse)
