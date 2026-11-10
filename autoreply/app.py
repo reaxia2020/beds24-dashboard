@@ -296,7 +296,7 @@ def cleaning_schedule():
                 else ""
             )
             rows_html += f"""
-            <li>
+            <li class="{"same-day" if item["same_day_checkin"] else ""}">
                 <span class="property">{escape(item["property"])}</span>
                 <span class="room">{escape(str(item["room"]))}</span>
                 <span class="guests">{item["guests"]}名</span>
@@ -326,13 +326,15 @@ def cleaning_schedule():
             h2 {{ font-size: 16px; margin: 4px 0 8px; }}
             ul {{ list-style: none; padding: 0; margin: 0; }}
             li {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-                  padding: 6px 0; border-top: 1px solid #eee; font-size: 14px; }}
+                  padding: 6px 8px; margin: 0 -8px; border-top: 1px solid #eee; font-size: 14px;
+                  border-radius: 6px; }}
             li:first-child {{ border-top: none; }}
+            li.same-day {{ background: #fdecea; }}
             .property {{ font-weight: bold; min-width: 160px; }}
             .room {{ color: #333; }}
             .guests {{ color: #888; }}
-            .badge {{ background: #ffefc2; color: #8a6d00; border-radius: 4px; padding: 2px 6px;
-                      font-size: 12px; }}
+            .badge {{ background: #e53935; color: #fff; border-radius: 4px; padding: 2px 6px;
+                      font-size: 12px; font-weight: bold; }}
         </style>
     </head>
     <body>
