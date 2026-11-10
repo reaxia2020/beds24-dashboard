@@ -216,7 +216,10 @@ def cron_daily():
     return {"room_assign_updates": room_assign_updates, "reminders_sent": reminders_sent}
 
 
-def build_cleaning_schedule(days_ahead=21):
+CLEANING_PROPERTY_IDS = [328093, 328094, 329645]  # kiryo(生野東)・Tama Riversideは清掃会社向けの対象外
+
+
+def build_cleaning_schedule(days_ahead=60):
     """今日から指定日数分の、物件・部屋ごとのチェックアウト(清掃要)予定を作る。
     同じ部屋に同日中に次のゲストが入る場合は、清掃会社が優先度を判断できるよう
     「同日チェックイン」フラグを立てる。"""
@@ -225,7 +228,7 @@ def build_cleaning_schedule(days_ahead=21):
     horizon = today + dt.timedelta(days=days_ahead)
     rows = []
 
-    for property_id in PROPERTY_IDS:
+    for property_id in CLEANING_PROPERTY_IDS:
         entry = faq.get("properties", {}).get(str(property_id), {})
         property_name = entry.get("name", str(property_id))
 
@@ -270,7 +273,10 @@ def build_cleaning_schedule(days_ahead=21):
 @app.get("/cleaning-schedule", response_class=HTMLResponse)
 def cleaning_schedule():
     """清掃会社にそのまま共有するための、ログイン不要の清掃予定ページ。
-    今日から3週間分のチェックアウト予定を日付ごとにまとめて表示する。"""
+    今日から2ヶ月分のチェックアウト予定を日付ごとにまとめて表示する。
+    固定の更新間隔はなく、アクセスの都度Beds24から最新データを取得して描画する
+    (新規予約・キャンセルも次のアクセス/自動更新で即反映される)。
+    開きっぱなしでも最新を保てるよう、5分おきの自動リロードを仕込んでいる。"""
     rows = build_cleaning_schedule()
 
     by_date = {}
@@ -308,6 +314,7 @@ def cleaning_schedule():
     <html>
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="refresh" content="300">
         <title>清掃スケジュール</title>
         <style>
             body {{ font-family: sans-serif; margin: 0; padding: 12px; background: #f7f7f7; }}
@@ -330,8 +337,8 @@ def cleaning_schedule():
     </head>
     <body>
         <h1>清掃スケジュール</h1>
-        <p class="note">チェックアウト日(清掃対応日)の一覧です。このページは常に最新の予約状況を表示します。</p>
-        {sections if sections else "<p>今後3週間のチェックアウト予定はありません。</p>"}
+        <p class="note">チェックアウト日(清掃対応日)の一覧です(今後2ヶ月分)。開くたびに最新の予約状況を取得し、5分おきに自動更新されます。</p>
+        {sections if sections else "<p>今後2ヶ月のチェックアウト予定はありません。</p>"}
     </body>
     </html>
     """
