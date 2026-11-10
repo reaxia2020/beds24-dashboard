@@ -86,6 +86,26 @@ def save_messages_bulk(rows):
         _messages_sheet().append_rows(list(rows), value_input_option="USER_ENTERED")
 
 
+def get_message(beds24_message_id):
+    """LINEの承認/却下ボタンから参照する際に、1件分の予約ID・下書き文面を取得する。"""
+    records = _messages_sheet().get_all_records()
+    for r in records:
+        if str(r.get("beds24_message_id")) == str(beds24_message_id):
+            return r
+    return None
+
+
+def update_message_status(beds24_message_id, status):
+    """LINEでの承認/却下結果をauto_sent列に反映する(status: 'TRUE' または 'REJECTED')。"""
+    col = _messages_sheet().col_values(1)
+    try:
+        row_idx = col.index(str(beds24_message_id)) + 1  # 1-indexedかつヘッダー込みなので+1
+    except ValueError:
+        return False
+    _messages_sheet().update_cell(row_idx, 7, status)  # 7列目 = auto_sent
+    return True
+
+
 def list_messages(limit=200):
     records = _messages_sheet().get_all_records()
     records = [r for r in records if r.get("category") != "baseline_seed"]

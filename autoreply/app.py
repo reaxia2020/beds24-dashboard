@@ -1,9 +1,14 @@
+import base64
+import hashlib
+import hmac
+import json
 import os
 import sys
 from html import escape
 from pathlib import Path
+from urllib.parse import parse_qs
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -12,7 +17,7 @@ from beds24_client import Beds24Client  # noqa: E402
 from . import registry_check, registry_room_assign, storage
 from .classifier import classify_and_draft
 from .faq_knowledge_loader import load_faq
-from .line_notify import notify_irregular
+from .line_notify import notify_irregular, reply_text, send_approval_request
 
 PROPERTY_IDS = [328093, 328094, 329645, 329647, 341983]
 
@@ -112,6 +117,7 @@ def process_new_messages():
             elif result["category"] == "irregular":
                 notify_irregular(property_id, booking_id, m.get("message"), result.get("reason"))
 
+            # LINEでの承認待ちをレビュー画面から追えるよう、通知より先に記録しておく
             storage.save_message(
                 beds24_message_id=beds24_message_id,
                 property_id=property_id,
@@ -121,6 +127,12 @@ def process_new_messages():
                 draft_reply=result.get("draft_reply"),
                 auto_sent=auto_sent,
             )
+
+            if result["category"] == "faq" and result.get("draft_reply") and not auto_sent:
+                send_approval_request(
+                    beds24_message_id, property_id, booking_id, m.get("message"), result.get("draft_reply")
+                )
+
             processed.append(
                 {
                     "property_id": property_id,
@@ -140,6 +152,58 @@ def webhook_beds24(background_tasks: BackgroundTasks):
     処理に数秒〜十数秒かかるため、Webhook自体は即座に200を返し、処理はバックグラウンドで行う。"""
     background_tasks.add_task(process_new_messages)
     return {"status": "accepted"}
+
+
+def _verify_line_signature(body: bytes, signature: str) -> bool:
+    secret = os.environ.get("LINE_CHANNEL_SECRET", "").strip()
+    if not secret or not signature:
+        return False
+    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+    expected = base64.b64encode(digest).decode("utf-8")
+    return hmac.compare_digest(expected, signature)
+
+
+def _handle_line_postback(data_str, reply_token):
+    """承認/却下ボタンのpostbackを処理する。dataは 'action=approve&id=123' 形式。"""
+    parsed = parse_qs(data_str)
+    action = (parsed.get("action") or [None])[0]
+    message_id = (parsed.get("id") or [None])[0]
+    if not action or not message_id:
+        return
+
+    record = storage.get_message(message_id)
+    if not record:
+        reply_text(reply_token, f"#{message_id} が見つかりませんでした(既に処理済みかもしれません)。")
+        return
+
+    if action == "approve":
+        try:
+            client.send_message(record.get("booking_id"), record.get("draft_reply"))
+            storage.update_message_status(message_id, "TRUE")
+            reply_text(reply_token, f"#{message_id} を承認して送信しました。")
+        except Exception as e:
+            reply_text(reply_token, f"#{message_id} の送信に失敗しました: {e}")
+    elif action == "reject":
+        storage.update_message_status(message_id, "REJECTED")
+        reply_text(reply_token, f"#{message_id} を却下しました(送信していません)。")
+
+
+@app.post("/webhooks/line")
+async def webhook_line(request: Request):
+    """LINEからのボタン操作(postback)を受け取り、FAQ回答案の承認/却下を処理する。
+    なりすまし防止のため、X-Line-Signatureを検証できたリクエストのみ処理する。"""
+    body = await request.body()
+    signature = request.headers.get("x-line-signature", "")
+    if not _verify_line_signature(body, signature):
+        return {"status": "invalid signature"}
+
+    payload = json.loads(body)
+    for event in payload.get("events", []):
+        if event.get("type") == "postback":
+            _handle_line_postback(
+                event.get("postback", {}).get("data", ""), event.get("replyToken")
+            )
+    return {"status": "ok"}
 
 
 @app.post("/cron/daily")
