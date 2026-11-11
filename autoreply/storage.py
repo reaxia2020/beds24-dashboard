@@ -134,6 +134,16 @@ def reminder_already_sent_today(booking_id, sent_date):
     )
 
 
+def reminder_ever_sent(booking_id, tier):
+    """日付を問わず、指定tierがこの予約に一度でも送られているか(チェックイン案内のような
+    「1回だけ送れば良い」ものの重複送信防止に使う)。"""
+    records = _reminders_sheet().get_all_records()
+    return any(
+        str(r.get("booking_id")) == str(booking_id) and r.get("tier") == tier
+        for r in records
+    )
+
+
 def mark_reminder_sent(booking_id, tier, sent_date):
     _reminders_sheet().append_row(
         [booking_id, tier, sent_date, dt.datetime.utcnow().isoformat()],

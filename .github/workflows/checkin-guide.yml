@@ -1,0 +1,17 @@
+name: チェックイン案内 5分おきバッチ
+
+on:
+  schedule:
+    # 5分おき(GitHub Actionsの負荷状況により数分遅れることがある)
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /cron/checkin-guide on Render
+        run: |
+          curl -sS -X POST "https://beds24-dashboard.onrender.com/cron/checkin-guide" \
+            --max-time 60 --retry 3 --retry-delay 10 --retry-all-errors \
+            --fail-with-body

@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 sys.path.append(str(Path(__file__).parent.parent))
 from beds24_client import Beds24Client  # noqa: E402
 
-from . import registry_check, registry_room_assign, storage
+from . import checkin_guide, registry_check, registry_room_assign, storage
 from .classifier import classify_and_draft
 from .faq_knowledge_loader import load_faq
 from .line_notify import notify_irregular, reply_text, send_approval_request
@@ -235,6 +235,20 @@ def cron_daily():
         "reminders_sent": reminders_sent,
         "reminders_error": reminders_error,
     }
+
+
+@app.post("/cron/checkin-guide")
+def cron_checkin_guide():
+    """GitHub Actionsから5分おきに呼び出すバッチ。本日チェックインのゲストのうち、
+    宿泊者名簿の提出が完全に確認できた人にだけ解錠方法を自動送信する
+    (Beds24側の「イン当日」オートアクションからは暗証番号を削除済み)。"""
+    try:
+        sent = checkin_guide.main()
+        error = None
+    except Exception as e:
+        sent = None
+        error = str(e)
+    return {"checkin_guides_sent": sent, "error": error}
 
 
 CLEANING_PROPERTY_IDS = [328093, 328094, 329645]  # kiryo(生野東)・Tama Riversideは清掃会社向けの対象外
