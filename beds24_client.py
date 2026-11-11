@@ -155,10 +155,15 @@ class Beds24Client:
         return data.get("data", [])
 
     def send_message(self, booking_id, message):
-        """指定した予約にホストとしてメッセージを送信する。"""
+        """指定した予約にホストとしてメッセージを送信する。
+        POST /bookings/messages はトップレベルが配列([{"success":..,"errors":[...]}])で
+        返ってくる(他の一覧系APIのような{"data": [...]}形式ではない)。"""
         payload = [{"bookingId": booking_id, "message": message}]
-        data = self._post("/bookings/messages", payload)
-        return data.get("data", data)
+        results = self._post("/bookings/messages", payload)
+        result = results[0] if results else {}
+        if not result.get("success"):
+            raise Beds24Error(f"メッセージ送信に失敗しました: {result.get('errors')}")
+        return result
 
     def get_airbnb_reviews(self, room_id):
         data = self._get("/channels/airbnb/reviews", params={"roomId": room_id})

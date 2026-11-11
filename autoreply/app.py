@@ -146,9 +146,11 @@ def process_new_messages():
     return processed
 
 
-@app.post("/webhooks/beds24")
+@app.api_route("/webhooks/beds24", methods=["GET", "POST"])
 def webhook_beds24(background_tasks: BackgroundTasks):
     """Beds24からの新着メッセージ通知を受けて、新着ゲストメッセージをまとめて処理する。
+    実際のBeds24予約Webhookは `GET /webhooks/beds24?bookid=...&status=...` 形式で飛んでくる
+    (POSTのみ受け付けていたため、これまで全件405で弾かれ一度も発火していなかった)。
     通知の中身を厳密にパースするのではなく、受信をトリガーに全物件の新着を確認する設計。
     処理に数秒〜十数秒かかるため、Webhook自体は即座に200を返し、処理はバックグラウンドで行う。"""
     background_tasks.add_task(process_new_messages)
@@ -210,10 +212,29 @@ async def webhook_line(request: Request):
 @app.post("/cron/daily")
 def cron_daily():
     """GitHub Actionsから1日1回呼び出される日次バッチ。宿泊者名簿の部屋自動判定と、
-    未提出者への催促送信を行う(催促は実際にゲストへ送信される)。"""
-    room_assign_updates = registry_room_assign.main()
-    reminders_sent = registry_check.main()
-    return {"room_assign_updates": room_assign_updates, "reminders_sent": reminders_sent}
+    未提出者への催促送信を行う(催促は実際にゲストへ送信される)。
+    片方が例外を起こしてももう片方は実行し、GitHub Actionsのリトライによる
+    二重送信を避けるため500ではなくエラー内容をそのまま返す。"""
+    try:
+        room_assign_updates = registry_room_assign.main()
+        room_assign_error = None
+    except Exception as e:
+        room_assign_updates = None
+        room_assign_error = str(e)
+
+    try:
+        reminders_sent = registry_check.main()
+        reminders_error = None
+    except Exception as e:
+        reminders_sent = None
+        reminders_error = str(e)
+
+    return {
+        "room_assign_updates": room_assign_updates,
+        "room_assign_error": room_assign_error,
+        "reminders_sent": reminders_sent,
+        "reminders_error": reminders_error,
+    }
 
 
 CLEANING_PROPERTY_IDS = [328093, 328094, 329645]  # kiryo(生野東)・Tama Riversideは清掃会社向けの対象外

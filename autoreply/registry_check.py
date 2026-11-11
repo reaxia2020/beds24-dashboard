@@ -117,7 +117,13 @@ def main():
             if tier is None:
                 continue  # まだどのtierの閾値にも入っていない
 
-            client.send_message(booking_id, MESSAGE_TEMPLATES[tier])
+            try:
+                client.send_message(booking_id, MESSAGE_TEMPLATES[tier])
+            except Exception as e:
+                # 1件の送信失敗で他の宿泊者への催促まで止めない。
+                # (送信前に例外が起きた場合はmark_reminder_sentを呼ばないため、次回また再試行される)
+                print(f"failed to send {tier} reminder for booking {booking_id}: {e}")
+                continue
             storage.mark_reminder_sent(booking_id, tier, today.isoformat())
             sent_count += 1
             print(f"sent {tier} reminder for booking {booking_id} (property {property_id})")
