@@ -71,7 +71,12 @@ def classify_and_draft(message, booking_context, faq_knowledge, history=None):
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
-        raw = resp.content[0].text.strip()
+        # 拡張思考(thinking)が有効なモデルだとcontent[0]がThinkingBlockになることがあるため、
+        # 先頭決め打ちではなくtextブロックを探す。
+        text_block = next((b for b in resp.content if getattr(b, "type", None) == "text"), None)
+        if text_block is None:
+            raise ValueError(f"応答にtextブロックが見つかりません: {[getattr(b, 'type', None) for b in resp.content]}")
+        raw = text_block.text.strip()
         parsed = json.loads(raw)
         category = parsed.get("category")
         if category not in ("faq", "irregular"):
