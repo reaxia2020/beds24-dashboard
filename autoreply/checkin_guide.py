@@ -36,14 +36,20 @@ def _parse_sheet_date(raw):
 
 def _resolve_room_entry(property_entry, room_id, unit_id):
     """物件のFAQ知識から、該当する部屋(複数部屋がある場合はroom_id/unit_idで特定)の
-    keybox案内文を取り出す。見つからなければNone。"""
+    解錠案内文を取り出す。建物入口に別途オートロックがある物件(例: kiryo MODEビル)は
+    building_entrance_codeもあわせて案内する。見つからなければNone。"""
     rooms = property_entry.get("rooms")
     if rooms:
         for info in rooms.values():
             if info.get("room_id") == room_id and info.get("unit_id") == unit_id:
                 return info.get("keybox")
         return None
-    return property_entry.get("keybox")
+
+    keybox = property_entry.get("keybox")
+    building_entrance = property_entry.get("building_entrance_code")
+    if keybox and building_entrance:
+        return f"{building_entrance}\n\n{keybox}"
+    return keybox
 
 
 def _matching_registry_row(gc, property_id, arrival, departure):
