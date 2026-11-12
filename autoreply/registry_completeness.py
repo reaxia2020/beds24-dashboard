@@ -88,3 +88,22 @@ def check_row_complete(header, row, min_guest_count=1):
             )
 
     return True, None
+
+
+def passport_check_inputs(header, row):
+    """check_row_completeが完全と判定した行から、パスポート画像のAI検証(passport_verify)に
+    渡すための入力を取り出す。戻り値: (non_japan_total, passport_value, guest_names)"""
+    name_cols = _col_indices(header, NAME_HEADER_SUBSTR)
+    guest_names = [_cell(row, idx) for idx in name_cols if _cell(row, idx)]
+
+    nationality_cols = _col_indices(header, NATIONALITY_HEADER_SUBSTR)
+    non_japan_total = sum(
+        _to_int(_cell(row, idx)) or 0
+        for idx in nationality_cols
+        if JAPAN_NATIONALITY_SUBSTR not in header[idx]
+    )
+
+    passport_cols = _col_indices(header, PASSPORT_HEADER_SUBSTR)
+    passport_value = _cell(row, passport_cols[0]) if passport_cols else ""
+
+    return non_japan_total, passport_value, guest_names

@@ -11,6 +11,7 @@ _gc = None
 _sh = None
 _messages_ws = None
 _reminders_ws = None
+_passport_checks_ws = None
 
 
 def _client():
@@ -39,6 +40,15 @@ def _reminders_sheet():
     if _reminders_ws is None:
         _reminders_ws = _spreadsheet().get_worksheet_by_id(STATE_SHEET["reminders_gid"])
     return _reminders_ws
+
+
+def _passport_checks_sheet():
+    global _passport_checks_ws
+    if _passport_checks_ws is None:
+        _passport_checks_ws = _spreadsheet().get_worksheet_by_id(
+            STATE_SHEET["passport_checks_gid"]
+        )
+    return _passport_checks_ws
 
 
 def init_db():
@@ -155,3 +165,21 @@ def list_reminders(limit=200):
     records = _reminders_sheet().get_all_records()
     records.sort(key=lambda r: r.get("sent_at", ""), reverse=True)
     return records[:limit]
+
+
+def get_cached_passport_check(file_id):
+    """パスポート画像1枚の検証結果キャッシュ(AI検証はコストがかかるため、
+    5分おきのポーリングのたびに同じファイルを再検証しないようにする)。
+    未検証ならNoneを返す。"""
+    records = _passport_checks_sheet().get_all_records()
+    for r in records:
+        if str(r.get("file_id")) == str(file_id):
+            return r.get("is_verified") == "TRUE", r.get("reason")
+    return None
+
+
+def cache_passport_check(file_id, is_verified, reason):
+    _passport_checks_sheet().append_row(
+        [file_id, "TRUE" if is_verified else "FALSE", reason, dt.datetime.utcnow().isoformat()],
+        value_input_option="USER_ENTERED",
+    )

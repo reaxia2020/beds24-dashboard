@@ -14,10 +14,10 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from beds24_client import Beds24Client  # noqa: E402
 
-from . import storage
+from . import passport_verify, storage
 from .faq_knowledge_loader import load_faq
 from .google_sheets import get_sheet_client
-from .registry_completeness import check_row_complete
+from .registry_completeness import check_row_complete, passport_check_inputs
 from .registry_sheets import REGISTRY_SHEETS
 
 TIER = "checkin_guide"
@@ -102,6 +102,15 @@ def main():
             if not is_complete:
                 print(f"booking {booking_id}: 名簿が不完全のため見送り({reason})")
                 continue
+
+            non_japan_total, passport_value, guest_names = passport_check_inputs(header, row)
+            if non_japan_total > 0:
+                verified, reasons = passport_verify.verify_passport_files(
+                    passport_value, guest_names
+                )
+                if not verified:
+                    print(f"booking {booking_id}: パスポート画像の検証が未完了のため見送り({'; '.join(reasons)})")
+                    continue
 
             entry_text = _resolve_room_entry(
                 property_entry, booking.get("roomId"), booking.get("unitId")
