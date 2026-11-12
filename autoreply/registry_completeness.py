@@ -80,5 +80,11 @@ def check_row_complete(header, row, min_guest_count=1):
         passport_value = _cell(row, passport_cols[0]) if passport_cols else ""
         if not passport_value:
             return False, f"外国籍の宿泊者が{non_japan_total}名いますが、パスポート画像が未添付です"
+        passport_file_count = len([f for f in passport_value.split(",") if f.strip()])
+        if passport_file_count < non_japan_total:
+            return False, (
+                f"外国籍の宿泊者が{non_japan_total}名いますが、"
+                f"パスポート画像が{passport_file_count}枚しかありません"
+            )
 
     return True, None
